@@ -37,4 +37,4 @@ targets:
         # permissions persist across rebuilds. Find it in Xcode > Settings > Accounts,
         # or: security find-identity -v -p codesigning   (the 10-char ID in the name).
         # DEVELOPMENT_TEAM: ABCDE12345
-        DEVELOPMENT_TEAM: XXXXXXXXXX
+

@@ -297,12 +297,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         promptAccessibilityIfNeeded()
         createTap()
         if eventTap == nil {
-            permTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] t in
+            permTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] t in
                 guard let self = self else { t.invalidate(); return }
-                if AXIsProcessTrusted() {
-                    self.createTap(); self.refreshMenu()
-                    if self.eventTap != nil { t.invalidate() }
-                }
+                guard AXIsProcessTrusted() else { return }
+                t.invalidate()
+                // TCC only applies a freshly-granted Accessibility permission to a
+                // newly-launched process; CGEvent.tapCreate will silently fail in
+                // this one even though AXIsProcessTrusted now returns true.
+                self.relaunchSelf()
             }
         }
 
@@ -423,6 +425,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func reenableTap() {
         if let tap = eventTap { CGEvent.tapEnable(tap: tap, enable: true) }
+    }
+
+    private func relaunchSelf() {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        p.arguments = ["-n", Bundle.main.bundlePath]
+        try? p.run()
+        NSApp.terminate(nil)
     }
 }
 

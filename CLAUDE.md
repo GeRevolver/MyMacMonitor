@@ -14,11 +14,28 @@ Mac by forwarding the keyboard's volume/mute keys over the monitor's Wi-Fi remot
     challenge (`URLCredential(trust:)`). Do not try to validate it.
   - First connect with no token → monitor shows an **Allow** dialog → the granted token
     arrives in an `ms.channel.connect` event → persist it to `~/.m9volume_token` and reuse.
-  - Keys are **relative only**: `KEY_VOLUP`, `KEY_VOLDOWN`, `KEY_MUTE` (mute is a toggle).
-    Send via JSON: `{"method":"ms.remote.control","params":{"Cmd":"Click",
+  - Keys are **relative only**: `KEY_VOLUP`, `KEY_VOLDOWN`, `KEY_MUTE` (mute is a toggle);
+    nav uses `KEY_LEFT/RIGHT/UP/DOWN`, `KEY_ENTER` (OK), `KEY_RETURN` (Back), `KEY_HOME`,
+    and `KEY_POWER`. Send via JSON: `{"method":"ms.remote.control","params":{"Cmd":"Click",
     "DataOfCmd":"KEY_VOLUP","Option":"false","TypeOfRemote":"SendRemoteKey"}}`
   - "Force unmute" = `KEY_VOLUP` then `KEY_VOLDOWN` (net-zero), because mute is only a toggle
     and the mute state can't be read locally.
+- **Waking from standby.** In **network standby** the NIC stays up and
+  `http://<IP>:8001/api/v2/` answers with `device.PowerState` (`"on"|"standby"`) and
+  `device.wifiMac`; in **deep standby** the NIC is off (HTTP + WS both dead), so a
+  **Wake-on-LAN** magic packet (6×0xFF + 16×MAC, UDP :9, sent to `255.255.255.255` **and** the
+  subnet-directed `<base>.255`) is the only wake lever. WoL requires the monitor setting
+  **Settings > General > Network > Expert Settings > "Power On with Mobile"** (WoWLAN) = ON —
+  without it, software wake from deep standby is impossible.
+  - `KEY_POWER` is a **toggle** (sent while on → turns it off) and its state can't be read
+    back, so it is **never blind-sent and never queued**. The auto-wake path sends WoL, probes
+    `PowerState`, and sends `KEY_POWER` **only when the probe returns `"standby"` and the WS is
+    currently connected**; `"on"`/missing/unreachable never toggle. A queued KEY_POWER would
+    flush on the next connect and switch the just-woken monitor back off — hence it bypasses
+    the pending queue entirely (`sendPowerIfConnected`, direct send, dropped on failure).
+    Accepted limitation: powering the monitor **off** requires a live WebSocket — during a
+    transient disconnect while the monitor is on, ⌃⌥P/Monitor Power will probe, see `"on"`,
+    and deliberately do nothing rather than risk a stale toggle.
 - **UPnP RenderingControl is a dead end.** The M9 advertises a MediaRenderer at
   `http://<IP>:9197/dmr` with a standard-looking RenderingControl SCPD (GetVolume/SetVolume,
   Channel=Master, Volume 0–100), but every call returns **HTTP 400 / UPnPError 402 "Invalid
@@ -27,25 +44,58 @@ Mac by forwarding the keyboard's volume/mute keys over the monitor's Wi-Fi remot
 - **SmartThings** would give absolute volume (`audioVolume` capability) but Personal Access
   Tokens now expire in ~24h → would require full OAuth. Not used.
 
-## Device specifics (this user's unit)
+## Device specifics
 
-- Model: `<MODEL_ID>` (internal `<INTERNAL_ID>`), 32" Smart Monitor M9, Tizen.
-- Current IP: `192.168.1.x` (DHCP — app auto-discovers, don't hardcode).
-- wifiMac: `XX:XX:XX:XX:XX:XX` (useful for a DHCP reservation or Wake-on-LAN).
+- Model: Samsung Smart Monitor M9 (32", Tizen). Replace `<MODEL_ID>` / `<INTERNAL_ID>`
+  with your unit's values if you need them recorded.
+- IP: assigned by DHCP — the app auto-discovers, don't hardcode.
+- wifiMac: auto-captured from the `:8001/api/v2/` probe and persisted (`m9_wifi_mac`) for
+  Wake-on-LAN; you only need to copy it manually for a DHCP reservation or router WoL entry.
+- **Required setting for auto-wake:** turn ON **Settings > General > Network > Expert
+  Settings > "Power On with Mobile"** — this keeps the NIC alive in standby so WoL and the
+  `:8001` probe work. With it off, the monitor drops to deep standby and can't be woken by
+  software.
 
 ## Architecture (`Sources/main.swift`, single file)
 
-- `M9Remote` — WebSocket client + discovery + reconnect + key sending.
-  - Discovery: try the saved IP (`UserDefaults` `m9_last_ip`); else sweep the local /24
-    (subnet from `getifaddrs` on en0/en1) hitting `:8001/api/v2/` and matching modelName
-    containing "M9". Re-sweeps automatically if reconnects keep failing (IP changed).
-  - Reconnect: proactive with exponential backoff (1→10s), reconnect on
-    `NSWorkspace.didWakeNotification`, re-discover after repeated failures.
-- `mediaKeyCallback` — a `@convention(c)` CGEventTap callback on `NSSystemDefined` (type 14),
-  subtype 8; keyCodes 0/1/7 = volume up/down/mute; swallows the event (returns nil) so the
-  Mac doesn't also react.
-- `AppDelegate` — `NSStatusItem` menu (status+IP, Forward-keys toggle, Launch-at-Login,
-  Vol/Mute/Unmute, Rescan, Quit), creates/enables the tap, prompts for Accessibility.
+- `M9Remote` — WebSocket client + discovery + reconnect + key sending + wake.
+  - Discovery (`probe`): try the saved IP (`UserDefaults` `m9_last_ip`); else sweep the local
+    /24 (subnet from `getifaddrs` on en0/en1) hitting `:8001/api/v2/` and matching the raw body
+    against "M9" (the hit is in `device.name`, not the sales-code modelName). The probe also
+    parses `wifiMac` + `PowerState` into `DeviceInfo`; `adopt` persists the MAC. Re-sweeps
+    automatically if reconnects keep failing (IP changed).
+  - Reconnect: proactive with exponential backoff (1→10s), reconnect on system/screens wake,
+    re-discover after repeated failures.
+  - Wake (`wakeMonitor`/`attemptWake`, guarded by a `waking` flag toggled on the main queue):
+    WoL → probe → `KEY_POWER` only when connected + `PowerState=="standby"` (see the
+    KEY_POWER-never-queued rule above); unreachable retries every 2 s up to ~20 s. No power
+    assertions — the monitor still sleeps normally.
+- `mediaKeyCallback` — a `@convention(c)` CGEventTap callback. Mask = `NSSystemDefined`
+  (type 14) **and** `keyDown`. Type 14 / subtype 8: keyCodes 0/1/7 = volume up/down/mute
+  (gated by `forwardingEnabled`). `keyDown`: **⌃⌥ hotkeys** (always live) and, when Remote
+  Mode is on, **bare keys** drive the monitor. Remote Mode matches only when flags ∩
+  {control, option, command, shift} is empty (arrows carry NumericPad/Fn flags that must not
+  disqualify them); ⌃⌥ is checked first so ⌃⌥R always exits. Arrows pass autorepeat; other
+  handled keys fire once but their repeats are still swallowed. Handled events return nil.
+- `AppDelegate` — `NSStatusItem` menu (status+IP; Forward-keys toggle; accessibility warning
+  when untrusted; Vol/Mute/Unmute; Remote Mode ⌃⌥R + OK/Back/Home/Monitor-Power; Rescan;
+  Settings…; About M9 Volume; Quit), creates the tap (always enabled once created —
+  `forwardingEnabled` gates only the media-key branch, so hotkeys survive unticking
+  Forward-keys), prompts for Accessibility. Menu-bar icon: `tv.and.hifispeaker.fill` normally
+  (fallback `display` → `speaker.wave.2.fill` → "M9" title), `av.remote.fill` in Remote Mode
+  (fallback `dpad` → accent-tinted normal icon); template images so the bar tints them.
+  Hotkeys: ⌃⌥ arrows/↩(OK)/⌫(Back)/H(Home)/P(smart power)/R(Remote Mode); menu key equivalents
+  are display-only (an LSUIElement app has no main menu, and the tap swallows the combo first).
+  - Settings window (lazy, programmatic AppKit, `isReleasedWhenClosed = false`): monitor
+    status + persisted wifiMac + Rescan; checkboxes for Forward-keys / Auto-wake / Launch-at-Login
+    that apply immediately; a static ⌃⌥ shortcuts reference. `refreshSettingsUI` two-way-syncs
+    the controls (on open and from `refreshMenu` while visible). Launch-at-Login and Auto-wake
+    live *only* here, not in the menu. `.accessory` app → always `NSApp.activate` before showing.
+  - About panel: `orderFrontStandardAboutPanel` with a `.credits` NSAttributedString listing
+    what the app does and the ⌃⌥ shortcuts; no custom window.
+- `UserDefaults` keys: `m9_last_ip` (discovery), `m9_wifi_mac` (WoL target),
+  `m9_autowake` (auto-wake toggle, default ON), `m9_forward_keys` (Forward-keys toggle,
+  default ON, loaded into `forwardingEnabled` before `createTap`). Token lives in `~/.m9volume_token`.
 
 ## Build constraints (critical — easy to break)
 
@@ -68,7 +118,12 @@ brew install xcodegen          # one time
 xcodegen generate              # makes M9Volume.xcodeproj from project.yml
 open M9Volume.xcodeproj        # then set Signing > Team, and Cmd+R
 ```
-Or skip Xcode and produce a signed app in /Applications with `./build.sh`.
+Or skip Xcode and produce a signed app in /Applications with `./build.sh` (auto-detects
+the signing team from the keychain; override with `DEVELOPMENT_TEAM=XXXXXXXXXX ./build.sh`).
+
+`M9Volume.xcodeproj` is **generated and gitignored** — never commit it; after cloning,
+run `xcodegen generate` first. End-user setup/troubleshooting lives in `docs/SETUP.md`;
+the protocol reference in `docs/PROTOCOL.md` (keep both in sync with this file).
 
 For Launch-at-Login to be stable, run the app from `/Applications` (Cmd+R runs it from
 DerivedData, which is fine for development but a transient path for the login item).

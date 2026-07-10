@@ -3,6 +3,28 @@
 Chronological record of working sessions. Newest first. Keep entries factual and short;
 STATUS.md carries the current state, this file carries the why/how history.
 
+## 2026-07-10 (later) — Security audit + history scrub (filter-repo, force-push)
+
+**Goal:** audit for secrets/leaks, then obfuscate personal data.
+
+- Audit: HEAD was clean, but pre-sanitization commits still carried the monitor Wi-Fi
+  MAC, home LAN IP, unit model/internal ids, and **two** Apple team ids (pbxproj + an
+  old project.yml); the ever-tracked `xcuserstate` binary leaked `/Users/omer/…` paths;
+  commit metadata used the personal gmail. No credentials anywhere; the pairing token
+  was never committed.
+- Rewrote all history with `git filter-repo`: literal replacements for the six
+  identifiers (`XX:…`/`<MODEL_ID>`-style placeholders), removed `M9Volume.xcodeproj/`
+  and `.DS_Store` from every commit, author/committer email →
+  `10370473+omarozt@users.noreply.github.com`. Verified zero hits across
+  `git rev-list --all`; HEAD tree byte-identical. Force-pushed. **All commit hashes
+  changed** — hashes in docs/memory from before this entry are historical labels only.
+  A pre-rewrite backup bundle was kept in the session scratchpad (transient).
+- Also fixed en route: the `sources/`→`Sources/` rename claimed by the earlier feature
+  commit had been silently lost to a `git reset` on case-insensitive APFS; re-done as
+  its own commit before the rewrite.
+- Deliberately NOT done (out of scope, candidates below): `~/.m9volume_token` is
+  written world-readable (`644`) — a `0600` chmod would be a two-line hardening.
+
 ## 2026-07-10 — Publish: hygiene, guides, build.sh, commit + push
 
 **Goal:** get the (previously all-uncommitted) working tree onto GitHub, polished.
@@ -22,8 +44,8 @@ STATUS.md carries the current state, this file carries the why/how history.
 - Fixed a lying comment: `modelKeyword` claimed to match `modelName`; it matches the raw
   :8001 body (hit is in `device.name`) — comment now says so.
 - Note: STATUS.md previously claimed the team id was removed from `project.pbxproj`; it
-  was actually still there. Moot now that the file is untracked, but the id remains in
-  git history (`445e15c`) — rewrite before ever making the repo public if desired.
+  was actually still there. Moot now that the file is untracked. (History carried it
+  until the same-day filter-repo rewrite — see the entry above.)
 
 **State at session end:** committed & pushed; compiles + full xcodebuild verified;
 hardware testing still pending (checklist in STATUS.md).
@@ -83,8 +105,10 @@ See STATUS.md.
 
 ## Earlier (committed history)
 
-- `9cd5c43` — initial implementation: volume/mute forwarding via CGEventTap +
+(Hashes below are post-rewrite — the 2026-07-10 filter-repo pass renumbered everything.)
+
+- `62d3fd0` — initial implementation: volume/mute forwarding via CGEventTap +
   Samsung WS remote, /24 discovery, reconnect w/ backoff, Launch-at-Login, menu bar UI.
-- `01ea353` — project settings + Accessibility permission handling (relaunch-on-grant).
-- `445e15c` — DEVELOPMENT_TEAM pinned for stable signing (later reverted in the working
+- `d48724b` — project settings + Accessibility permission handling (relaunch-on-grant).
+- `1835211` — DEVELOPMENT_TEAM pinned for stable signing (later reverted in the working
   tree during sanitization).

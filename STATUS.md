@@ -13,10 +13,12 @@ _Last updated: 2026-07-10. Update this file whenever a session materially change
   to /Applications).
 - Docs: README polished; `docs/SETUP.md` (end-user guide) and `docs/PROTOCOL.md`
   (protocol reference) added; MIT `LICENSE` added.
-- Sanitization: personal device identifiers are out of the tracked files. Note the
-  `DEVELOPMENT_TEAM` id still exists in *history* (commit `445e15c`) and in the local
-  untracked `.xcodeproj` — fine while the repo is private; rewrite history before making
-  it public if that matters.
+- Sanitization: **complete, including history.** 2026-07-10 `git filter-repo` rewrite
+  scrubbed the monitor MAC/IP/model ids and both team ids from every commit, dropped the
+  ever-tracked `.xcodeproj`/`.DS_Store` blobs, and switched commit emails to the GitHub
+  noreply address; force-pushed. All commit hashes changed. The team id still lives in
+  the local *untracked* `.xcodeproj` (harmless). Safe to make public from a
+  leak standpoint.
 
 ## Verification state
 

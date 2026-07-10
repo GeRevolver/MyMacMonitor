@@ -1,0 +1,17 @@
+# macOS
+.DS_Store
+
+# Xcode — the project is generated from project.yml (xcodegen generate)
+M9Volume.xcodeproj/
+xcuserdata/
+*.xcuserstate
+
+# Claude Code local config
+.claude/
+
+# Local token persisted by the app
+.m9volume_token
+
+# Build outputs
+build/
+DerivedData/

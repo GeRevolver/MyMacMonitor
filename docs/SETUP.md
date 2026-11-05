@@ -96,7 +96,11 @@ you didn't, treat it as a possible impersonation attempt on your network and don
 ### Volume keys don't reach the monitor
 - Is the monitor the **sound output**? (*System Settings → Sound → Output*.) By design, keys
   only go to it then.
-- Accessibility granted to *this* build? Remove stale entries and re-grant.
+- Accessibility granted to *this* build? If the menu still says "Grant Accessibility to
+  capture keys…" while the toggle looks on, the entry belongs to an earlier build (ad-hoc
+  signatures change on every rebuild). Quit the app, select it in *System Settings → Privacy
+  & Security → Accessibility* (called **Device Control and Data Access** on macOS 27), press
+  **−**, reopen the app and grant again.
 - Keys are inert inside secure-input fields (password prompts). That's macOS by design.
 
 ### Powering the monitor off while disconnected does nothing

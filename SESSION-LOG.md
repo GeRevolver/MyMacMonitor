@@ -3,7 +3,7 @@
 Chronological record of working sessions. Newest first. Keep entries factual and short;
 STATUS.md carries the current state, this file carries the why/how history.
 
-## 2026-11-05 — Fork: security audit, hardening, rebrand to My MacMonitor (GeRevolver)
+## 2026-11-05 — Fork: security audit, hardening, rebrand to MyMacMonitor (GeRevolver)
 
 **Goal:** decide whether to trust the upstream app on a daily-driver Mac; keep the feature,
 remove excess privilege.
@@ -13,7 +13,7 @@ remove excess privilege.
   token, sweeps on any network, weak identity check, global ATS opt-out, auto-wake default on.
 - Hardened all of the above (see SECURITY-AUDIT.md for before/after) and removed the ⌃⌥
   hotkeys / Remote Mode (they required the `keyDown` tap).
-- Rebrand: *My MacMonitor*, new bundle id and icon (drawn with Core Graphics, no SF Symbols),
+- Rebrand: *MyMacMonitor*, new bundle id and icon (drawn with Core Graphics, no SF Symbols),
   token moved to `~/.mymacmonitor_token` with one-time migration.
 - Replaced the Homebrew/xcodegen build with `build.sh` (swiftc) + explicit `install.sh`; build
   output kept out of iCloud-synced folders (xattrs invalidated the signature).

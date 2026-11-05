@@ -1,6 +1,6 @@
 # Samsung M9 / Tizen Remote — Protocol Notes
 
-Developer/tinkerer notes on how My MacMonitor (fork of M9Volume) talks to a Samsung Smart
+Developer/tinkerer notes on how MyMacMonitor (fork of M9Volume) talks to a Samsung Smart
 Monitor M9. The protocol research is by the upstream author; the security-related parts were
 updated for this fork. See [../README.md](../README.md) and
 [../SECURITY-AUDIT.md](../SECURITY-AUDIT.md).

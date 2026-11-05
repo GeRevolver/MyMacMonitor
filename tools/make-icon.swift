@@ -1,4 +1,4 @@
-// make-icon.swift — renders Resources/AppIcon.icns for My MacMonitor.
+// make-icon.swift — renders Resources/AppIcon.icns for MyMacMonitor.
 // Drawn with plain Core Graphics paths (no SF Symbols: Apple's license forbids them in app icons).
 // Usage:  swift tools/make-icon.swift   (from the repo root; needs iconutil, ships with macOS)
 import AppKit
@@ -31,27 +31,20 @@ func render(_ px: Int) -> Data {
         .draw(in: screen, angle: 90)
 
     // Speaker cone on the screen.
+    // Wi-Fi signal on the screen: a dot plus three arcs opening upward, fading outward
+    // (the app talks to the monitor over Wi-Fi).
     let cyan = NSColor(srgbRed: 0.40, green: 0.91, blue: 0.98, alpha: 1)
+    let origin = NSPoint(x: 512 * s, y: 478 * s)
     cyan.setFill()
-    let spk = NSBezierPath()
-    spk.move(to: NSPoint(x: 360 * s, y: 545 * s))
-    spk.line(to: NSPoint(x: 405 * s, y: 545 * s))
-    spk.line(to: NSPoint(x: 465 * s, y: 495 * s))
-    spk.line(to: NSPoint(x: 465 * s, y: 665 * s))
-    spk.line(to: NSPoint(x: 405 * s, y: 615 * s))
-    spk.line(to: NSPoint(x: 360 * s, y: 615 * s))
-    spk.close()
-    spk.fill()
-
-    // Three sound waves, growing and fading out.
-    for (i, radius) in [CGFloat(60), 110, 160].enumerated() {
-        cyan.withAlphaComponent(1 - CGFloat(i) * 0.25).setStroke()
-        let wave = NSBezierPath()
-        wave.appendArc(withCenter: NSPoint(x: 470 * s, y: 580 * s), radius: radius * s,
-                       startAngle: -40, endAngle: 40)
-        wave.lineWidth = 26 * s
-        wave.lineCapStyle = .round
-        wave.stroke()
+    NSBezierPath(ovalIn: NSRect(x: origin.x - 28 * s, y: origin.y - 28 * s,
+                                width: 56 * s, height: 56 * s)).fill()
+    for (i, radius) in [CGFloat(80), 145, 210].enumerated() {
+        cyan.withAlphaComponent(1 - CGFloat(i) * 0.22).setStroke()
+        let arc = NSBezierPath()
+        arc.appendArc(withCenter: origin, radius: radius * s, startAngle: 45, endAngle: 135)
+        arc.lineWidth = 34 * s
+        arc.lineCapStyle = .round
+        arc.stroke()
     }
 
     NSGraphicsContext.restoreGraphicsState()

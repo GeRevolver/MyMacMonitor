@@ -1,4 +1,4 @@
-// main.swift — My MacMonitor (menu-bar agent)
+// main.swift — MyMacMonitor (menu-bar agent)
 //
 // Forwards the Mac keyboard's volume up / down / mute keys to a Samsung Smart
 // Monitor M9 over its Wi-Fi WebSocket remote. Menu-bar only, no Dock icon.
@@ -10,7 +10,7 @@
 //   * "Launch at Login" toggle (SMAppService) — works once it's a real .app
 //   * Auto-wake the monitor on Mac/displays wake (Wake-on-LAN + guarded KEY_POWER)
 //
-// Hardened fork (branch `hardened`, based on omarozt/M9Volume@496855f) — see SECURITY-AUDIT.md:
+// Hardened fork (based on omarozt/M9Volume@496855f) — see SECURITY-AUDIT.md:
 //   * The event tap listens ONLY to system media keys (no keyDown) — the ⌃⌥ hotkeys and
 //     Remote Mode were removed; OK/Back/Home/Power remain as menu items.
 //   * Volume keys are swallowed only while the default audio output is the M9; anywhere
@@ -584,6 +584,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         refreshMenu()
     }
 
+    /// Opening the app again from Finder/Launchpad while it already runs (it has no Dock
+    /// icon or main window) shows Settings, so the click visibly does something.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        openSettings()
+        return false
+    }
+
     // Menu --------------------------------------------------------------------
 
     private func setupMenu() {
@@ -597,7 +604,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func updateStatusIcon() {
         guard let button = statusItem.button else { return }
         if let img = symbol("tv.and.hifispeaker.fill", "display", "speaker.wave.2.fill",
-                            accessibility: "My MacMonitor") {
+                            accessibility: "MyMacMonitor") {
             button.image = img
         } else {
             button.title = "M9"
@@ -675,7 +682,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settings.keyEquivalentModifierMask = [.command]     // display-only, like the nav items
         settings.target = self
         menu.addItem(settings)
-        let about = NSMenuItem(title: "About My MacMonitor", action: #selector(showAbout), keyEquivalent: "")
+        let about = NSMenuItem(title: "About MyMacMonitor", action: #selector(showAbout), keyEquivalent: "")
         about.target = self
         menu.addItem(about)
         let q = NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q")
@@ -702,7 +709,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             else { try SMAppService.mainApp.unregister() }
         } catch {
             let a = NSAlert(); a.messageText = "Launch at Login failed"
-            a.informativeText = "\(error.localizedDescription)\n\nThis works when run as My MacMonitor.app in /Applications."
+            a.informativeText = "\(error.localizedDescription)\n\nThis works when run as MyMacMonitor.app in /Applications."
             a.runModal()
         }
     }
@@ -772,6 +779,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         forwardCheckbox = fwd; autoWakeCheckbox = aw; loginCheckbox = login
 
         let shortcuts = NSTextField(wrappingLabelWithString:
+            "MyMacMonitor lives in the menu bar (top-right icon), with no Dock icon. " +
             "F10 / F11 / F12 control the M9 only while it is the Mac's sound output; " +
             "otherwise they control the Mac as usual. OK / Back / Home / Power are in the menu.")
         shortcuts.font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
@@ -798,7 +806,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let window = NSWindow(contentRect: NSRect(origin: .zero, size: container.fittingSize),
                               styleMask: [.titled, .closable], backing: .buffered, defer: false)
-        window.title = "My MacMonitor Settings"
+        window.title = "MyMacMonitor Settings"
         window.isReleasedWhenClosed = false
         window.contentView = container
         window.center()
@@ -837,7 +845,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             attributes: attrs)
         NSApp.orderFrontStandardAboutPanel(options: [
             .credits: credits,
-            .applicationName: "My MacMonitor",
+            .applicationName: "MyMacMonitor",
         ])
     }
     /// Smart power: toggle over the live socket, else run the wake sequence (WoL + guarded

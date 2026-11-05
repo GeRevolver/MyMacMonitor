@@ -1,6 +1,6 @@
 #!/bin/sh
-# Build "My MacMonitor.app" with plain swiftc — no Xcode project, no Homebrew, no xcodegen.
-# Output: $BUILD_DIR/My MacMonitor.app, ad-hoc signed with the hardened runtime.
+# Build "MyMacMonitor.app" with plain swiftc — no Xcode project, no Homebrew, no xcodegen.
+# Output: $BUILD_DIR/MyMacMonitor.app, ad-hoc signed with the hardened runtime.
 # BUILD_DIR defaults to a non-synced cache folder: iCloud Drive (Desktop & Documents sync)
 # stamps Finder/file-provider xattrs on bundles, which invalidates the code signature.
 # It does NOT install or launch anything — see install.sh for that.
@@ -10,7 +10,7 @@ cd "$(dirname "$0")"
 BUNDLE_ID="io.github.gerevolver.mymacmonitor"
 EXE="MyMacMonitor"
 BUILD_DIR="${BUILD_DIR:-$HOME/Library/Caches/MyMacMonitor-build}"
-APP="$BUILD_DIR/My MacMonitor.app"
+APP="$BUILD_DIR/MyMacMonitor.app"
 
 rm -rf "$BUILD_DIR"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"

@@ -3,8 +3,8 @@
 # Separate from build.sh on purpose: building never touches the system; installing is explicit.
 set -e
 BUILD_DIR="${BUILD_DIR:-$HOME/Library/Caches/MyMacMonitor-build}"
-SRC="$BUILD_DIR/My MacMonitor.app"
-DST="/Applications/My MacMonitor.app"
+SRC="$BUILD_DIR/MyMacMonitor.app"
+DST="/Applications/MyMacMonitor.app"
 
 [ -d "$SRC" ] || { echo "error: $SRC not found — run ./build.sh first" >&2; exit 1; }
 codesign --verify --strict "$SRC"

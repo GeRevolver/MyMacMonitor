@@ -18,8 +18,8 @@ targets:
     info:
       path: Info.plist
       properties:
-        CFBundleName: My MacMonitor
-        CFBundleDisplayName: My MacMonitor
+        CFBundleName: MyMacMonitor
+        CFBundleDisplayName: MyMacMonitor
         CFBundleIconFile: AppIcon
         CFBundleShortVersionString: "1.1"
         CFBundleVersion: "2"
@@ -30,7 +30,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.github.gerevolver.mymacmonitor
-        PRODUCT_NAME: My MacMonitor
+        PRODUCT_NAME: MyMacMonitor
         EXECUTABLE_NAME: MyMacMonitor
         MARKETING_VERSION: "1.1"
         CURRENT_PROJECT_VERSION: "2"

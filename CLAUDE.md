@@ -1,4 +1,4 @@
-# CLAUDE.md — My MacMonitor
+# CLAUDE.md — MyMacMonitor
 
 A macOS menu-bar agent that forwards the keyboard's volume/mute keys to a **Samsung Smart
 Monitor M9** over the monitor's Wi-Fi remote. Security-hardened fork of `omarozt/M9Volume`
@@ -49,7 +49,7 @@ for compatibility.
 ## Build / run
 
 ```
-./build.sh       # swiftc → ~/Library/Caches/MyMacMonitor-build/My MacMonitor.app (no install)
+./build.sh       # swiftc → ~/Library/Caches/MyMacMonitor-build/MyMacMonitor.app (no install)
 ./install.sh     # explicit: copy to /Applications and open
 swift tools/make-icon.swift   # regenerate Resources/AppIcon.icns (no SF Symbols in icons)
 ```

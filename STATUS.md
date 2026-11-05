@@ -1,11 +1,11 @@
-# STATUS — My MacMonitor
+# STATUS — MyMacMonitor
 
 _Last updated: 2026-11-05._
 
 ## Where things stand
 
-- Fork of `omarozt/M9Volume`, audited at `496855f`; work lives on branch `hardened`.
-- Security hardening (10 changes) + rebrand to **My MacMonitor** (name, bundle id
+- Fork of `omarozt/M9Volume`, audited at `496855f`; all work is on `main`.
+- Security hardening (10 changes) + rebrand to **MyMacMonitor** (name, bundle id
   `io.github.gerevolver.mymacmonitor`, custom icon, token path with migration).
 - Dependency-free build (`build.sh`) and explicit install (`install.sh`).
 - Docs: README, [SECURITY-AUDIT.md](SECURITY-AUDIT.md), docs/SETUP.md, docs/PROTOCOL.md.

@@ -1,6 +1,6 @@
-# My MacMonitor — Setup Guide
+# MyMacMonitor — Setup Guide
 
-End-user setup for My MacMonitor, the macOS menu-bar app that lets the Mac keyboard's volume
+End-user setup for MyMacMonitor, the macOS menu-bar app that lets the Mac keyboard's volume
 keys control a Samsung Smart Monitor M9. See [../README.md](../README.md) for the overview and
 [../SECURITY-AUDIT.md](../SECURITY-AUDIT.md) for the security model.
 
@@ -19,8 +19,8 @@ keys control a Samsung Smart Monitor M9. See [../README.md](../README.md) for th
 ## 2. Build and install
 
 ```sh
-./build.sh      # → ~/Library/Caches/MyMacMonitor-build/My MacMonitor.app (installs nothing)
-./install.sh    # → /Applications/My MacMonitor.app, then opens it
+./build.sh      # → ~/Library/Caches/MyMacMonitor-build/MyMacMonitor.app (installs nothing)
+./install.sh    # → /Applications/MyMacMonitor.app, then opens it
 ```
 
 - `build.sh` compiles with `swiftc`, embeds the icon and **ad-hoc signs** the app with the

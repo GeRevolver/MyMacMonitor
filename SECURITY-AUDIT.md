@@ -1,9 +1,9 @@
-# Security Audit & Hardening — My MacMonitor
+# Security Audit & Hardening — MyMacMonitor
 
 **Subject:** [`omarozt/M9Volume`](https://github.com/omarozt/M9Volume) at commit
 [`496855f`](https://github.com/omarozt/M9Volume/tree/496855f14fc270a28b5a8b2f97388a977d32e608),
 a macOS menu-bar app that forwards the keyboard's volume keys to a Samsung Smart Monitor M9.
-**Result:** this fork, *My MacMonitor* (branch `hardened`).
+**Result:** this fork, *MyMacMonitor*.
 **Date:** November 2026 · **Auditor:** Gerardo Espinosa ([@GeRevolver](https://github.com/GeRevolver))
 
 ---

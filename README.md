@@ -1,6 +1,6 @@
-<p align="center"><img src="docs/icon.png" width="128" alt="My MacMonitor icon"></p>
+<p align="center"><img src="docs/icon.png" width="128" alt="MyMacMonitor icon"></p>
 
-# My MacMonitor
+# MyMacMonitor
 
 A small macOS menu-bar app that makes the Mac keyboard's **volume keys (F10 / F11 / F12)
 control a Samsung Smart Monitor M9's built-in speakers**. It's a security-hardened fork of
@@ -29,7 +29,7 @@ use, and that's what this app speaks.
 
 ## Security posture
 
-| | Upstream | My MacMonitor |
+| | Upstream | MyMacMonitor |
 |---|---|---|
 | Keyboard visibility | Every keystroke (`keyDown`) | Media keys only |
 | Volume keys away from the monitor | Swallowed | Passed through to macOS |
@@ -71,7 +71,7 @@ More: [docs/SETUP.md](docs/SETUP.md) (setup & troubleshooting) ·
 Quit from the menu, then:
 
 ```sh
-rm -rf "/Applications/My MacMonitor.app" ~/.mymacmonitor_token
+rm -rf "/Applications/MyMacMonitor.app" ~/.mymacmonitor_token
 defaults delete io.github.gerevolver.mymacmonitor
 ```
 

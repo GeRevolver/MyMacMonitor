@@ -1,39 +1,41 @@
-name: M9Volume
+name: MyMacMonitor
 
+# Optional Xcode route (xcodegen generate). The supported, dependency-free build is ./build.sh.
 options:
-  bundleIdPrefix: com.omer
+  bundleIdPrefix: io.github.gerevolver
   deploymentTarget:
     macOS: "13.0"
   createIntermediateGroups: true
 
 targets:
-  M9Volume:
+  MyMacMonitor:
     type: application
     platform: macOS
     sources:
       - path: Sources
+      - path: Resources/AppIcon.icns
+        buildPhase: resources
     info:
       path: Info.plist
       properties:
-        CFBundleName: M9Volume
-        CFBundleDisplayName: M9 Volume
-        CFBundleShortVersionString: "1.0"
-        CFBundleVersion: "1"
+        CFBundleName: My MacMonitor
+        CFBundleDisplayName: My MacMonitor
+        CFBundleIconFile: AppIcon
+        CFBundleShortVersionString: "1.1"
+        CFBundleVersion: "2"
         LSUIElement: true                # menu-bar agent: no Dock icon / main window
         LSMinimumSystemVersion: "13.0"
-        NSAppTransportSecurity:          # allow plain-http :8001 discovery + self-signed wss :8002
-          NSAllowsArbitraryLoads: true
+        NSAppTransportSecurity:          # LAN-only exemption: plain-http :8001 discovery + self-signed wss :8002
+          NSAllowsLocalNetworking: true
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.omer.m9volume
-        MARKETING_VERSION: "1.0"
-        CURRENT_PROJECT_VERSION: "1"
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.gerevolver.mymacmonitor
+        PRODUCT_NAME: My MacMonitor
+        EXECUTABLE_NAME: MyMacMonitor
+        MARKETING_VERSION: "1.1"
+        CURRENT_PROJECT_VERSION: "2"
         ENABLE_HARDENED_RUNTIME: YES
         # NOTE: no entitlements file is declared on purpose -> App Sandbox is OFF.
         # A sandboxed app cannot create the global CGEventTap, so do NOT add the
         # "App Sandbox" capability in Xcode.
         CODE_SIGN_STYLE: Automatic
-        # Set your Team ID so signing is stable and Accessibility / Launch-at-Login
-        # permissions persist across rebuilds. Find it in Xcode > Settings > Accounts,
-        # or: security find-identity -v -p codesigning   (the 10-char ID in the name).
-        # DEVELOPMENT_TEAM: ABCDE12345

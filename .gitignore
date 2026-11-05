@@ -3,6 +3,7 @@
 
 # Xcode — the project is generated from project.yml (xcodegen generate)
 M9Volume.xcodeproj/
+MyMacMonitor.xcodeproj/
 xcuserdata/
 *.xcuserstate
 
@@ -11,7 +12,9 @@ xcuserdata/
 
 # Local token persisted by the app
 .m9volume_token
+.mymacmonitor_token
 
 # Build outputs
 build/
+Resources/AppIcon.iconset/
 DerivedData/

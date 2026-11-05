@@ -1,4 +1,4 @@
-// main.swift — M9 Volume (menu-bar agent)
+// main.swift — My MacMonitor (menu-bar agent)
 //
 // Forwards the Mac keyboard's volume up / down / mute keys to a Samsung Smart
 // Monitor M9 over its Wi-Fi WebSocket remote. Menu-bar only, no Dock icon.
@@ -9,25 +9,38 @@
 //     re-discovers the IP if it keeps failing — e.g. DHCP gave it a new address)
 //   * "Launch at Login" toggle (SMAppService) — works once it's a real .app
 //   * Auto-wake the monitor on Mac/displays wake (Wake-on-LAN + guarded KEY_POWER)
-//   * Always-on ⌃⌥ nav hotkeys (arrows/OK/Back/Home/Power) and a toggleable Remote Mode
-//     where bare arrows/Return/Esc drive the monitor
 //
-// Build it into a signed /Applications app with the accompanying build.sh.
-// Quick compile-check first:  swiftc main.swift -o /tmp/m9 -framework Cocoa
+// Hardened fork (branch `hardened`, based on omarozt/M9Volume@496855f) — see SECURITY-AUDIT.md:
+//   * The event tap listens ONLY to system media keys (no keyDown) — the ⌃⌥ hotkeys and
+//     Remote Mode were removed; OK/Back/Home/Power remain as menu items.
+//   * Volume keys are swallowed only while the default audio output is the M9; anywhere
+//     else (built-in speakers, AirPods…) they pass through to macOS untouched.
+//   * Trust-on-first-use pin of the monitor's TLS certificate; challenges from any other
+//     host/port are rejected.
+//   * Pairing token written 0600; discovery/connection limited to the network the M9 was
+//     first found on; auto-wake off by default.
+//
+// Build with ./build.sh (no install); install explicitly with ./install.sh.
 
 import Cocoa
+import CoreAudio
+import CryptoKit
 import ServiceManagement
 
 // MARK: - WebSocket remote + discovery ---------------------------------------
 
 final class M9Remote: NSObject, URLSessionWebSocketDelegate {
-    static let clientName = "M9Volume"
+    static let clientName = "MyMacMonitor"   // name shown in the monitor's device list
     static let modelKeyword = "M9"            // matched against the raw :8001 body — the hit
                                               // is in device.name; modelName is a sales code
     private let ipKey = "m9_last_ip"
     private let wifiMacKey = "m9_wifi_mac"    // persisted for Wake-on-LAN across launches
+    private let certPinKey = "m9_cert_sha256" // TOFU pin of the monitor's TLS cert (DER SHA-256)
+    private let homeSubnetKey = "m9_home_subnet" // /24 base the M9 was found on
     private let tokenURL = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent(".m9volume_token")
+        .appendingPathComponent(".mymacmonitor_token")
+    private let legacyTokenURL = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent(".m9volume_token")   // pre-rebrand location
 
     /// Parsed from the :8001/api/v2/ probe. `wifiMac` feeds Wake-on-LAN; `powerState`
     /// ("on"/"standby") gates the guarded KEY_POWER on the auto-wake path.
@@ -38,6 +51,7 @@ final class M9Remote: NSObject, URLSessionWebSocketDelegate {
 
     private(set) var ip: String?
     private(set) var connected = false
+    private(set) var certMismatch = false       // pinned cert no longer matches; set on main
     var onUpdate: (() -> Void)?
 
     private var session: URLSession!
@@ -54,11 +68,25 @@ final class M9Remote: NSObject, URLSessionWebSocketDelegate {
         super.init()
         session = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
         wifiMac = UserDefaults.standard.string(forKey: wifiMacKey)
+        // One-time move of a pre-rebrand token, then tighten it (older builds wrote 0644).
+        let fm = FileManager.default
+        if !fm.fileExists(atPath: tokenURL.path), fm.fileExists(atPath: legacyTokenURL.path) {
+            try? fm.moveItem(at: legacyTokenURL, to: tokenURL)
+        }
+        try? fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: tokenURL.path)
     }
 
     // Discovery ---------------------------------------------------------------
 
+    /// True until the M9 has been found once; afterwards only on that same /24. Keeps the
+    /// app from probing/sweeping (and sending its token to) hosts on foreign networks.
+    func onHomeNetwork() -> Bool {
+        guard let home = UserDefaults.standard.string(forKey: homeSubnetKey) else { return true }
+        return Self.localSubnetBase() == home
+    }
+
     func start() {
+        guard onHomeNetwork() else { DispatchQueue.main.async { self.onUpdate?() }; return }
         if let saved = UserDefaults.standard.string(forKey: ipKey) {
             probe(saved) { [weak self] info in
                 guard let self = self else { return }
@@ -79,6 +107,9 @@ final class M9Remote: NSObject, URLSessionWebSocketDelegate {
     /// The wake sequence reads `wifiMac` on main, so the write hops there too (adopt is
     /// called from URLSession completion queues).
     private func adopt(_ ip: String, _ info: DeviceInfo) {
+        if let dot = ip.range(of: ".", options: .backwards) {
+            UserDefaults.standard.set(String(ip[..<dot.lowerBound]), forKey: homeSubnetKey)
+        }
         if let mac = info.wifiMac {
             DispatchQueue.main.async {
                 self.wifiMac = mac
@@ -98,16 +129,17 @@ final class M9Remote: NSObject, URLSessionWebSocketDelegate {
         session.dataTask(with: req) { data, _, _ in
             guard let data = data,
                   let body = String(data: data, encoding: .utf8),
-                  body.contains(Self.modelKeyword) else { completion(nil); return }
-            let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
-            let device = obj?["device"] as? [String: Any]
-            completion(DeviceInfo(wifiMac: device?["wifiMac"] as? String,
-                                  powerState: device?["PowerState"] as? String))
+                  body.contains(Self.modelKeyword),
+                  // Must also be a Samsung-style device-info JSON, not just any body with "M9".
+                  let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+                  let device = obj["device"] as? [String: Any] else { completion(nil); return }
+            completion(DeviceInfo(wifiMac: device["wifiMac"] as? String,
+                                  powerState: device["PowerState"] as? String))
         }.resume()
     }
 
     func sweep() {
-        guard !sweeping, let base = Self.localSubnetBase() else { return }
+        guard !sweeping, onHomeNetwork(), let base = Self.localSubnetBase() else { return }
         sweeping = true
         DispatchQueue.main.async { self.onUpdate?() }      // shows "searching…"
         let group = DispatchGroup()
@@ -161,7 +193,7 @@ final class M9Remote: NSObject, URLSessionWebSocketDelegate {
     // Connection --------------------------------------------------------------
 
     func connect() {
-        guard !connected, !connecting, let ip = ip else { return }
+        guard !connected, !connecting, let ip = ip, onHomeNetwork() else { return }
         connecting = true
         let name64 = Data(Self.clientName.utf8).base64EncodedString()
         var urlStr = "wss://\(ip):8002/api/v2/channels/samsung.remote.control?name=\(name64)"
@@ -195,7 +227,11 @@ final class M9Remote: NSObject, URLSessionWebSocketDelegate {
                let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                let d = obj["data"] as? [String: Any],
                let token = d["token"] as? String {
-                try? token.write(to: tokenURL, atomically: true, encoding: .utf8)
+                // Owner-only from the first byte (createFile applies the mode on creation),
+                // then re-assert it in case the file already existed with looser bits.
+                FileManager.default.createFile(atPath: tokenURL.path, contents: Data(token.utf8),
+                                               attributes: [.posixPermissions: 0o600])
+                try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: tokenURL.path)
             }
             connected = true; connecting = false; attempts = 0
             DispatchQueue.main.async { self.onUpdate?() }
@@ -231,10 +267,24 @@ final class M9Remote: NSObject, URLSessionWebSocketDelegate {
         if !connected { connect() }
     }
 
+    /// Manual rescan from the menu: also re-homes discovery onto the current network, so a
+    /// deliberate click is the only way the app ever sweeps a network other than the first.
     func rescan() {
         UserDefaults.standard.removeObject(forKey: ipKey)
+        UserDefaults.standard.removeObject(forKey: homeSubnetKey)
         connected = false; connecting = false; task = nil; attempts = 0
         sweep()
+    }
+
+    /// Forget the pairing token and the pinned certificate — needed if the monitor is reset
+    /// or its certificate changes (e.g. after a firmware update). The next connect shows the
+    /// monitor's Allow dialog again and pins the new certificate.
+    func resetPairing() {
+        try? FileManager.default.removeItem(at: tokenURL)
+        UserDefaults.standard.removeObject(forKey: certPinKey)
+        certMismatch = false
+        // A live socket's receive() fails on cancel → markDisconnected → reconnect (no token).
+        if let t = task { t.cancel(with: .goingAway, reason: nil) } else { attempts = 0; connect() }
     }
 
     // Sending -----------------------------------------------------------------
@@ -328,7 +378,8 @@ final class M9Remote: NSObject, URLSessionWebSocketDelegate {
     /// until a ~20 s deadline, re-sending WoL each round. `waking` guards re-entry.
     func wakeMonitor() {
         DispatchQueue.main.async {
-            guard !self.waking else { return }
+            // No WoL broadcasts or probes on networks other than the monitor's.
+            guard !self.waking, self.onHomeNetwork() else { return }
             self.waking = true
             self.attemptWake(ip: self.ip, deadline: Date().addingTimeInterval(20))
         }
@@ -375,13 +426,33 @@ final class M9Remote: NSObject, URLSessionWebSocketDelegate {
         }
     }
 
+    /// The monitor's cert is self-signed, so CA validation is impossible; instead pin it on
+    /// first use (SHA-256 of the leaf DER) and refuse anything else afterwards. Only the
+    /// adopted monitor IP on :8002 is ever considered — every other challenge is cancelled.
     func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge,
                     completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
-        if let trust = challenge.protectionSpace.serverTrust {
-            completionHandler(.useCredential, URLCredential(trust: trust))
-        } else {
-            completionHandler(.performDefaultHandling, nil)
+        let space = challenge.protectionSpace
+        guard space.authenticationMethod == NSURLAuthenticationMethodServerTrust,
+              let trust = space.serverTrust else {
+            completionHandler(.performDefaultHandling, nil); return
         }
+        guard space.host == ip, space.port == 8002,
+              let chain = SecTrustCopyCertificateChain(trust) as? [SecCertificate],
+              let leaf = chain.first else {
+            completionHandler(.cancelAuthenticationChallenge, nil); return
+        }
+        let fingerprint = SHA256.hash(data: SecCertificateCopyData(leaf) as Data)
+            .map { String(format: "%02x", $0) }.joined()
+        if let pinned = UserDefaults.standard.string(forKey: certPinKey) {
+            guard pinned == fingerprint else {
+                DispatchQueue.main.async { self.certMismatch = true; self.onUpdate?() }
+                completionHandler(.cancelAuthenticationChallenge, nil); return
+            }
+        } else {
+            UserDefaults.standard.set(fingerprint, forKey: certPinKey)   // trust on first use
+        }
+        DispatchQueue.main.async { self.certMismatch = false }
+        completionHandler(.useCredential, URLCredential(trust: trust))
     }
 }
 
@@ -397,12 +468,15 @@ private func mediaKeyCallback(proxy: CGEventTapProxy, type: CGEventType,
         return Unmanaged.passUnretained(event)
     }
 
+    // Volume keys are only taken over while macOS is actually sending audio to the M9;
+    // with any other default output they fall through so the Mac's own volume works.
     if type.rawValue == 14, app.forwardingEnabled,              // 14 == NSSystemDefined
        let ns = NSEvent(cgEvent: event), ns.subtype.rawValue == 8 {
         let data1 = ns.data1
         let keyCode = (data1 & 0xFFFF0000) >> 16
         let keyState = (data1 & 0x0000FF00) >> 8                // 0x0A down
-        if keyCode == 0 || keyCode == 1 || keyCode == 7 {       // up / down / mute
+        // up / down / mute; the CoreAudio check runs only for these, never for play/brightness
+        if (keyCode == 0 || keyCode == 1 || keyCode == 7), defaultOutputIsM9() {
             if keyState == 0x0A {
                 switch keyCode {
                 case 0: app.remote.send("KEY_VOLUP")
@@ -414,24 +488,35 @@ private func mediaKeyCallback(proxy: CGEventTapProxy, type: CGEventType,
             return nil   // swallow
         }
     }
-
-    // ⌃⌥ hotkeys are always live and Remote Mode maps bare keys — both independent of
-    // forwardingEnabled so nav works with volume forwarding off. ⌃⌥ is checked first so
-    // ⌃⌥R always exits Remote Mode. Both branches intersect only the four "real" modifier
-    // masks (arrows carry NumericPad/Fn flags that must not disqualify a match): hotkeys
-    // require exactly ⌃⌥ — ⌃⌥⇧/⌃⌥⌘ combos pass through to apps, not get swallowed.
-    if type == .keyDown {
-        let keyCode = Int(event.getIntegerValueField(.keyboardEventKeycode))
-        let autorepeat = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
-        let flags = event.flags
-        if flags.intersection([.maskControl, .maskAlternate, .maskCommand, .maskShift]) == [.maskControl, .maskAlternate] {
-            if app.handleHotkey(keyCode: keyCode, autorepeat: autorepeat) { return nil }
-        } else if app.remoteModeActive,
-                  flags.intersection([.maskControl, .maskAlternate, .maskCommand, .maskShift]).isEmpty {
-            if app.handleRemoteKey(keyCode: keyCode, autorepeat: autorepeat) { return nil }
-        }
-    }
     return Unmanaged.passUnretained(event)
+}
+
+/// Default output device is the M9 when CoreAudio reports it on DisplayPort/HDMI and its
+/// name carries the model (it shows up as e.g. "Smart M90SF"). Cheap property reads, so it
+/// is evaluated per key press rather than cached.
+func defaultOutputIsM9() -> Bool {
+    let system = AudioObjectID(kAudioObjectSystemObject)
+    var device = AudioDeviceID(0)
+    var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+    var addr = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+                                          mScope: kAudioObjectPropertyScopeGlobal,
+                                          mElement: kAudioObjectPropertyElementMain)
+    guard AudioObjectGetPropertyData(system, &addr, 0, nil, &size, &device) == noErr,
+          device != kAudioObjectUnknown else { return false }
+
+    var transport = UInt32(0)
+    size = UInt32(MemoryLayout<UInt32>.size)
+    addr.mSelector = kAudioDevicePropertyTransportType
+    guard AudioObjectGetPropertyData(device, &addr, 0, nil, &size, &transport) == noErr,
+          transport == kAudioDeviceTransportTypeDisplayPort || transport == kAudioDeviceTransportTypeHDMI
+    else { return false }
+
+    var name: Unmanaged<CFString>?
+    size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+    addr.mSelector = kAudioObjectPropertyName
+    guard AudioObjectGetPropertyData(device, &addr, 0, nil, &size, &name) == noErr,
+          let cf = name?.takeRetainedValue() else { return false }
+    return (cf as String).contains(M9Remote.modelKeyword)
 }
 
 // MARK: - App delegate / menu bar --------------------------------------------
@@ -439,7 +524,6 @@ private func mediaKeyCallback(proxy: CGEventTapProxy, type: CGEventType,
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let remote = M9Remote()
     var forwardingEnabled = true
-    var remoteModeActive = false               // not persisted; starts off each launch
 
     private let autoWakeKey = "m9_autowake"
     private let forwardKeysKey = "m9_forward_keys"    // persists forwardingEnabled across launches
@@ -464,7 +548,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var loginCheckbox: NSButton?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        UserDefaults.standard.register(defaults: [autoWakeKey: true, forwardKeysKey: true])
+        // Auto-wake is opt-in: it broadcasts Wake-on-LAN on every Mac wake.
+        UserDefaults.standard.register(defaults: [autoWakeKey: false, forwardKeysKey: true])
         forwardingEnabled = UserDefaults.standard.bool(forKey: forwardKeysKey)  // before createTap()
         setupMenu()
         remote.onUpdate = { [weak self] in self?.refreshMenu() }
@@ -507,19 +592,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.menu = NSMenu()
     }
 
-    /// Normal state: a display+speaker glyph. Remote Mode: an A/V remote glyph. Each has an
-    /// SF Symbol fallback chain (glyphs vary by release), and Remote Mode falls back to the
-    /// accent-tinted normal icon. Images stay template so the menu bar tints them per appearance.
+    /// A display+speaker glyph with an SF Symbol fallback chain (glyphs vary by release).
+    /// Images stay template so the menu bar tints them per appearance.
     private func updateStatusIcon() {
         guard let button = statusItem.button else { return }
-        if remoteModeActive,
-           let img = symbol("av.remote.fill", "dpad", accessibility: "M9 Remote Mode") {
+        if let img = symbol("tv.and.hifispeaker.fill", "display", "speaker.wave.2.fill",
+                            accessibility: "My MacMonitor") {
             button.image = img
-            button.contentTintColor = nil
-        } else if let img = symbol("tv.and.hifispeaker.fill", "display", "speaker.wave.2.fill",
-                                   accessibility: remoteModeActive ? "M9 Remote Mode" : "M9 Volume") {
-            button.image = img
-            button.contentTintColor = remoteModeActive ? .controlAccentColor : nil
         } else {
             button.title = "M9"
         }
@@ -538,6 +617,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Menu-header / Settings status string. Shared so both surfaces read identically.
     private func statusString() -> String {
+        if remote.certMismatch { return "M9 — certificate changed! (Reset pairing if expected)" }
+        if !remote.onHomeNetwork() { return "M9 — not on the monitor's network" }
         if let ip = remote.ip { return remote.connected ? "M9 — connected (\(ip))" : "M9 — \(ip) (offline)" }
         return "M9 — searching…"
     }
@@ -571,35 +652,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             menu.addItem(it)
         }
 
-        // Nav / Remote Mode. Key equivalents are display-only: an LSUIElement app has no
-        // main menu so they never fire on their own, and the tap swallows the combos first.
+        // Remote nav, click-only (the keyboard hotkeys were removed with the keyDown tap).
         menu.addItem(.separator())
-        let rm = NSMenuItem(title: "Remote Mode", action: #selector(toggleRemoteModeMenu), keyEquivalent: "r")
-        rm.keyEquivalentModifierMask = [.control, .option]
-        rm.state = remoteModeActive ? .on : .off
-        rm.target = self
-        menu.addItem(rm)
-        let nav: [(String, String, Selector)] = [
-            ("OK", "\r", #selector(okPress)), ("Back", "\u{8}", #selector(backPress)),
-            ("Home", "h", #selector(homePress)), ("Monitor Power", "p", #selector(powerToggle)),
+        let nav: [(String, Selector)] = [
+            ("OK", #selector(okPress)), ("Back", #selector(backPress)),
+            ("Home", #selector(homePress)), ("Monitor Power", #selector(powerToggle)),
         ]
-        for (t, ke, sel) in nav {
-            let it = NSMenuItem(title: t, action: sel, keyEquivalent: ke)
-            it.keyEquivalentModifierMask = [.control, .option]
-            it.target = self
+        for (t, sel) in nav {
+            let it = NSMenuItem(title: t, action: sel, keyEquivalent: ""); it.target = self
             menu.addItem(it)
         }
 
         // Launch-at-Login and Auto-wake now live only in Settings.
         menu.addItem(.separator())
-        let rescan = NSMenuItem(title: "Rescan for monitor", action: #selector(rescan), keyEquivalent: "")
+        let rescan = NSMenuItem(title: "Rescan for monitor (this network)", action: #selector(rescan), keyEquivalent: "")
         rescan.target = self
         menu.addItem(rescan)
+        let repair = NSMenuItem(title: "Reset pairing…", action: #selector(resetPairing), keyEquivalent: "")
+        repair.target = self
+        menu.addItem(repair)
         let settings = NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
         settings.keyEquivalentModifierMask = [.command]     // display-only, like the nav items
         settings.target = self
         menu.addItem(settings)
-        let about = NSMenuItem(title: "About M9 Volume", action: #selector(showAbout), keyEquivalent: "")
+        let about = NSMenuItem(title: "About My MacMonitor", action: #selector(showAbout), keyEquivalent: "")
         about.target = self
         menu.addItem(about)
         let q = NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q")
@@ -626,7 +702,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             else { try SMAppService.mainApp.unregister() }
         } catch {
             let a = NSAlert(); a.messageText = "Launch at Login failed"
-            a.informativeText = "\(error.localizedDescription)\n\nThis works when run as M9Volume.app in /Applications."
+            a.informativeText = "\(error.localizedDescription)\n\nThis works when run as My MacMonitor.app in /Applications."
             a.runModal()
         }
     }
@@ -637,7 +713,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func okPress()   { remote.send("KEY_ENTER") }
     @objc private func backPress() { remote.send("KEY_RETURN") }
     @objc private func homePress() { remote.send("KEY_HOME") }
-    @objc private func toggleRemoteModeMenu() { toggleRemoteMode() }
+    @objc private func resetPairing() {
+        NSApp.activate(ignoringOtherApps: true)
+        let a = NSAlert()
+        a.messageText = "Reset pairing with the M9?"
+        a.informativeText = "Forgets the saved token and the pinned certificate. The monitor will " +
+            "show its Allow dialog again on the next connection. Do this only if you reset or " +
+            "updated the monitor — an unexpected certificate change can mean someone is " +
+            "impersonating it on your network."
+        a.addButton(withTitle: "Reset"); a.addButton(withTitle: "Cancel")
+        if a.runModal() == .alertFirstButtonReturn { remote.resetPairing() }
+    }
 
     // Settings checkboxes apply immediately (no Save button).
     @objc private func forwardCheckboxChanged(_ sender: NSButton) { setForwarding(sender.state == .on) }
@@ -686,8 +772,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         forwardCheckbox = fwd; autoWakeCheckbox = aw; loginCheckbox = login
 
         let shortcuts = NSTextField(wrappingLabelWithString:
-            "⌃⌥←↑↓→ navigate · ⌃⌥↩ OK · ⌃⌥⌫ Back · ⌃⌥H Home · ⌃⌥P Power\n" +
-            "⌃⌥R toggles Remote Mode, where bare arrows / Return / Esc drive the monitor.")
+            "F10 / F11 / F12 control the M9 only while it is the Mac's sound output; " +
+            "otherwise they control the Mac as usual. OK / Back / Home / Power are in the menu.")
         shortcuts.font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
         shortcuts.textColor = .secondaryLabelColor
         shortcuts.isSelectable = false
@@ -712,7 +798,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let window = NSWindow(contentRect: NSRect(origin: .zero, size: container.fittingSize),
                               styleMask: [.titled, .closable], backing: .buffered, defer: false)
-        window.title = "M9 Volume Settings"
+        window.title = "My MacMonitor Settings"
         window.isReleasedWhenClosed = false
         window.contentView = container
         window.center()
@@ -745,13 +831,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .foregroundColor: NSColor.secondaryLabelColor,
         ]
         let credits = NSAttributedString(string:
-            "Forwards the Mac keyboard's volume/mute keys and remote navigation to a " +
-            "Samsung Smart Monitor M9 over its Wi-Fi remote.\n\n" +
-            "⌃⌥←↑↓→ navigate · ⌃⌥↩ OK · ⌃⌥⌫ Back · ⌃⌥H Home · ⌃⌥P Power · ⌃⌥R Remote Mode",
+            "Forwards the Mac keyboard's volume/mute keys to a Samsung Smart Monitor M9 " +
+            "over its Wi-Fi remote, only while the M9 is the sound output.\n\n" +
+            "Hardened fork of omarozt/M9Volume @ 496855f by GeRevolver.",
             attributes: attrs)
         NSApp.orderFrontStandardAboutPanel(options: [
             .credits: credits,
-            .applicationName: "M9 Volume",
+            .applicationName: "My MacMonitor",
         ])
     }
     /// Smart power: toggle over the live socket, else run the wake sequence (WoL + guarded
@@ -762,41 +848,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     @objc private func rescan()  { remote.rescan() }
 
-    private func toggleRemoteMode() {
-        remoteModeActive.toggle()
-        updateStatusIcon()
-        refreshMenu()
-    }
-
-    /// ⌃⌥ hotkeys → M9 nav. Arrows pass autorepeat (held navigation); every other handled
-    /// key fires once but its autorepeats are still swallowed. Returns true when handled.
-    func handleHotkey(keyCode: Int, autorepeat: Bool) -> Bool {
-        switch keyCode {
-        case 123: remote.send("KEY_LEFT");  return true
-        case 124: remote.send("KEY_RIGHT"); return true
-        case 125: remote.send("KEY_DOWN");  return true
-        case 126: remote.send("KEY_UP");    return true
-        case 36:  if !autorepeat { remote.send("KEY_ENTER") };  return true   // Return → OK
-        case 51:  if !autorepeat { remote.send("KEY_RETURN") }; return true   // ⌫ → Back
-        case 4:   if !autorepeat { remote.send("KEY_HOME") };   return true   // H → Home
-        case 35:  if !autorepeat { powerToggle() };             return true   // P → power
-        case 15:  if !autorepeat { toggleRemoteMode() };        return true   // R → Remote Mode
-        default:  return false
-        }
-    }
-
-    /// Remote Mode bare keys → M9 nav. Same autorepeat policy as the ⌃⌥ hotkeys.
-    func handleRemoteKey(keyCode: Int, autorepeat: Bool) -> Bool {
-        switch keyCode {
-        case 123: remote.send("KEY_LEFT");  return true
-        case 124: remote.send("KEY_RIGHT"); return true
-        case 125: remote.send("KEY_DOWN");  return true
-        case 126: remote.send("KEY_UP");    return true
-        case 36:  if !autorepeat { remote.send("KEY_ENTER") };  return true   // Return → OK
-        case 53:  if !autorepeat { remote.send("KEY_RETURN") }; return true   // Esc → Back
-        default:  return false
-        }
-    }
     @objc private func openAccessibility() {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
             NSWorkspace.shared.open(url)
@@ -814,15 +865,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard eventTap == nil, AXIsProcessTrusted() else { return }
         guard let tap = CGEvent.tapCreate(
             tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap,
-            eventsOfInterest: CGEventMask((1 << 14) | (1 << CGEventType.keyDown.rawValue)),
+            // NSSystemDefined (14) only: media/volume keys. No keyDown — the app never sees
+            // ordinary typing.
+            eventsOfInterest: CGEventMask(1 << 14),
             callback: mediaKeyCallback,
             userInfo: Unmanaged.passUnretained(self).toOpaque()
         ) else { return }
         eventTap = tap
         runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
         CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
-        // Always on once created — forwardingEnabled gates only the media-key branch, so
-        // the ⌃⌥ hotkeys and Remote Mode stay live even with volume forwarding off.
+        // forwardingEnabled and the M9-is-the-output check gate the swallow inside the callback.
         CGEvent.tapEnable(tap: tap, enable: true)
     }
 

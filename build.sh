@@ -1,38 +1,33 @@
 #!/bin/sh
-# Build M9Volume and install a signed copy into /Applications.
-#
-# Signing: uses $DEVELOPMENT_TEAM if set, else the team of the first codesigning
-# identity in the keychain, else falls back to ad-hoc (works, but Accessibility
-# permission won't persist across rebuilds — see README).
+# Build "My MacMonitor.app" with plain swiftc — no Xcode project, no Homebrew, no xcodegen.
+# Output: $BUILD_DIR/My MacMonitor.app, ad-hoc signed with the hardened runtime.
+# BUILD_DIR defaults to a non-synced cache folder: iCloud Drive (Desktop & Documents sync)
+# stamps Finder/file-provider xattrs on bundles, which invalidates the code signature.
+# It does NOT install or launch anything — see install.sh for that.
 set -e
 cd "$(dirname "$0")"
 
-command -v xcodegen >/dev/null 2>&1 || {
-  echo "error: xcodegen not found — install with: brew install xcodegen" >&2
-  exit 1
-}
-xcodegen generate
+BUNDLE_ID="io.github.gerevolver.mymacmonitor"
+EXE="MyMacMonitor"
+BUILD_DIR="${BUILD_DIR:-$HOME/Library/Caches/MyMacMonitor-build}"
+APP="$BUILD_DIR/My MacMonitor.app"
 
-TEAM=${DEVELOPMENT_TEAM:-$(security find-identity -v -p codesigning 2>/dev/null \
-  | sed -n 's/.*(\([A-Z0-9]\{10\}\))".*/\1/p' | head -1)}
-if [ -n "$TEAM" ]; then
-  echo "Signing with team $TEAM"
-  SIGN="DEVELOPMENT_TEAM=$TEAM"
-else
-  echo "warning: no codesigning identity found — using ad-hoc signing." >&2
-  SIGN="CODE_SIGN_IDENTITY=- CODE_SIGNING_ALLOWED=YES"
-fi
+rm -rf "$BUILD_DIR"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
-xcodebuild -project M9Volume.xcodeproj -scheme M9Volume -configuration Release \
-  -derivedDataPath build $SIGN build
+swiftc -O -target arm64-apple-macos13.0 \
+  -framework Cocoa -framework CoreAudio -framework ServiceManagement \
+  Sources/main.swift -o "$APP/Contents/MacOS/$EXE"
 
-APP=build/Build/Products/Release/M9Volume.app
-[ -d "$APP" ] || { echo "error: build product not found at $APP" >&2; exit 1; }
+# Resolve the Xcode build variables Info.plist expects.
+sed -e 's/$(DEVELOPMENT_LANGUAGE)/en/' \
+    -e "s/\$(EXECUTABLE_NAME)/$EXE/" \
+    -e "s/\$(PRODUCT_BUNDLE_IDENTIFIER)/$BUNDLE_ID/" \
+    Info.plist > "$APP/Contents/Info.plist"
+plutil -lint "$APP/Contents/Info.plist"
+cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 
-# Replace any running copy, then install with ditto (preserves the signature).
-pkill -x M9Volume 2>/dev/null || true
-rm -rf /Applications/M9Volume.app
-ditto "$APP" /Applications/M9Volume.app
-
-echo "Installed /Applications/M9Volume.app — launching."
-open /Applications/M9Volume.app
+xattr -cr "$APP"
+codesign --force --sign - --options runtime --identifier "$BUNDLE_ID" "$APP"
+codesign --verify --strict --verbose=2 "$APP"
+echo "Built $APP (not installed)."

@@ -1,8 +1,9 @@
 # Samsung M9 / Tizen Remote — Protocol Notes
 
-Developer/tinkerer notes on how M9 Volume talks to a Samsung Smart Monitor M9. Everything
-here was proven empirically against real hardware. See [../README.md](../README.md) for the
-app overview.
+Developer/tinkerer notes on how My MacMonitor (fork of M9Volume) talks to a Samsung Smart
+Monitor M9. The protocol research is by the upstream author; the security-related parts were
+updated for this fork. See [../README.md](../README.md) and
+[../SECURITY-AUDIT.md](../SECURITY-AUDIT.md).
 
 The M9 runs **Tizen** and does **not** support DDC/CI, so brightness/volume tools like
 MonitorControl and BetterDisplay can't see it. Control happens over the **Samsung WebSocket
@@ -18,16 +19,19 @@ This is the channel that sends key presses.
 wss://<IP>:8002/api/v2/channels/samsung.remote.control?name=<base64-name>&token=<token>
 ```
 
-- `name` is a client label, **base64-encoded** (this app uses `M9Volume`).
-- **Self-signed TLS.** The monitor presents a self-signed certificate. Trust it in the
-  URLSession auth challenge with `URLCredential(trust:)` — don't try to validate it.
+- `name` is a client label, **base64-encoded** (this app uses `MyMacMonitor`; it's what the
+  monitor lists under connected devices).
+- **Self-signed TLS.** The monitor presents a self-signed certificate, so CA validation is
+  impossible. Upstream accepted *any* certificate from *any* host; this fork **pins the
+  certificate on first use** (SHA-256 of the leaf DER) and only answers challenges for the
+  adopted monitor IP on `:8002`. A mismatch is refused and shown in the menu.
 - **Token flow (first-run pairing):**
   1. Connect with **no `token`** parameter.
   2. The monitor shows an on-screen **Allow / Deny** dialog.
   3. On Allow, the granted token arrives in an `ms.channel.connect` event
      (`data.token` in the JSON).
   4. **Persist it** and append `&token=<token>` on every later connect.
-     This app stores it at `~/.m9volume_token`.
+     This app stores it owner-only (`0600`) at `~/.mymacmonitor_token`.
 - An `unauthorized` message means the token was rejected — drop the connection and re-pair.
 
 ### Sending a key
@@ -117,14 +121,15 @@ the socket is up before it can deliver the power key.)
 
 ## Discovery
 
-No hardcoded IP — the monitor is found by sweep:
+No hardcoded IP — the monitor is found by sweep, **only on the home network** (the /24 where
+it was first found; elsewhere the app neither sweeps nor connects):
 
 1. Try the saved IP first (`m9_last_ip`).
 2. Otherwise sweep the local **/24**: derive the base from the Mac's **en0/en1** IPv4 address
    (via `getifaddrs`), then probe `http://<base>.1..254:8001/api/v2/` in parallel.
-3. **Match "M9" in the raw response body.** The hit is in **`device.name`**, *not*
-   `modelName` — the M9's `modelName` is a sales code that does **not** contain "M9". Keep the
-   match on the raw body; don't "fix" it to parse `modelName`.
+3. **Match "M9" in the raw response body** (the hit is in **`device.name`**, *not*
+   `modelName`, which is a sales code without "M9"), **and** require the body to be a JSON
+   object with a `device` dictionary.
 
 Reconnect is proactive with exponential backoff (1→10 s), reconnects on system/display wake,
 and re-sweeps after repeated failures (the IP may have changed via DHCP).

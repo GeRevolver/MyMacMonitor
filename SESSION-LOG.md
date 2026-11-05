@@ -3,6 +3,25 @@
 Chronological record of working sessions. Newest first. Keep entries factual and short;
 STATUS.md carries the current state, this file carries the why/how history.
 
+## 2026-11-05 — Fork: security audit, hardening, rebrand to My MacMonitor (GeRevolver)
+
+**Goal:** decide whether to trust the upstream app on a daily-driver Mac; keep the feature,
+remove excess privilege.
+
+- Read-only audit of `496855f` (code, history, author, permissions, network). Clean intent,
+  but: global `keyDown` tap, unconditional swallow of volume keys, blanket TLS trust, `0644`
+  token, sweeps on any network, weak identity check, global ATS opt-out, auto-wake default on.
+- Hardened all of the above (see SECURITY-AUDIT.md for before/after) and removed the ⌃⌥
+  hotkeys / Remote Mode (they required the `keyDown` tap).
+- Rebrand: *My MacMonitor*, new bundle id and icon (drawn with Core Graphics, no SF Symbols),
+  token moved to `~/.mymacmonitor_token` with one-time migration.
+- Replaced the Homebrew/xcodegen build with `build.sh` (swiftc) + explicit `install.sh`; build
+  output kept out of iCloud-synced folders (xattrs invalidated the signature).
+- Verified on hardware: pairing, single LAN connection (`nettop`), pin == presented cert,
+  token `0600`, key routing in both directions.
+
+_Entries below are the upstream author's history._
+
 ## 2026-07-10 (later) — Security audit + history scrub (filter-repo, force-push)
 
 **Goal:** audit for secrets/leaks, then obfuscate personal data.

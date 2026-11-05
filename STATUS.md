@@ -1,55 +1,27 @@
-# STATUS — snapshot for session continuation
+# STATUS — My MacMonitor
 
-_Last updated: 2026-07-10. Update this file whenever a session materially changes the repo._
+_Last updated: 2026-11-05._
 
 ## Where things stand
 
-- Branch `main`, **committed and pushed** to `github.com/omarozt/M9Volume` (private repo).
-  The 2026-07-05 feature set (auto-wake, ⌃⌥ hotkeys, Remote Mode, Settings/About/icon)
-  plus the 2026-07-10 polish pass are all in.
-- Repo hygiene done: `M9Volume.xcodeproj` is generated + gitignored (untracked along with
-  `.DS_Store`/`xcuserstate`); source dir renamed `sources/` → `Sources/` (matches
-  project.yml/docs); `build.sh` now actually exists (auto-detects signing team, installs
-  to /Applications).
-- Docs: README polished; `docs/SETUP.md` (end-user guide) and `docs/PROTOCOL.md`
-  (protocol reference) added; MIT `LICENSE` added.
-- Sanitization: **complete, including history.** 2026-07-10 `git filter-repo` rewrite
-  scrubbed the monitor MAC/IP/model ids and both team ids from every commit, dropped the
-  ever-tracked `.xcodeproj`/`.DS_Store` blobs, and switched commit emails to the GitHub
-  noreply address; force-pushed. All commit hashes changed. The team id still lives in
-  the local *untracked* `.xcodeproj` (harmless). Safe to make public from a
-  leak standpoint.
+- Fork of `omarozt/M9Volume`, audited at `496855f`; work lives on branch `hardened`.
+- Security hardening (10 changes) + rebrand to **My MacMonitor** (name, bundle id
+  `io.github.gerevolver.mymacmonitor`, custom icon, token path with migration).
+- Dependency-free build (`build.sh`) and explicit install (`install.sh`).
+- Docs: README, [SECURITY-AUDIT.md](SECURITY-AUDIT.md), docs/SETUP.md, docs/PROTOCOL.md.
 
-## Verification state
+## Verified on hardware (MacBook Air M3, macOS 27.2, Samsung M9 M90SF via USB-C)
 
-- ✅ Compiles clean (`swiftc Sources/main.swift`), full `xcodebuild` app build succeeds.
-- ✅ Two adversarial review rounds on the feature set (2026-07-05); all confirmed
-  findings fixed — see SESSION-LOG.md.
-- ❌ **NOT yet tested on hardware.** Pending manual checklist:
-  1. Volume/mute keys still work (regression).
-  2. `defaults read com.omer.m9volume m9_wifi_mac` shows the MAC after discovery.
-  3. ⌃⌥ nav hotkeys work, incl. with "Forward volume keys" off; ⌃⌥⇧ combos pass through.
-  4. Remote Mode: icon swap, bare-key nav, exits with ⌃⌥R, off after relaunch.
-  5. Auto-wake: sleep Mac → wake → monitor on within seconds; displays-idle → key press →
-     monitor on; toggle off → nothing; monitor already on → no spurious toggle.
-  6. Settings window sync both directions; About panel; Launch at Login from /Applications.
-  7. `./build.sh` end-to-end (team auto-detect, install, relaunch, permissions persist).
+- ✅ Pairing, discovery, single LAN connection only, cert pin matches, token `0600`.
+- ✅ F10–F12 → monitor when it's the sound output; → Mac with built-in speakers.
+- ✅ Idle cost ≈ 0 % CPU, ~33 MB RAM.
 
-## User actions required (blockers for testing)
+## Not yet exercised
 
-- On the monitor: **Settings > General > Network > Expert Settings > "Power On with
-  Mobile" = ON** (auto-wake is impossible from deep standby without it).
-- Signing: either run `./build.sh` (auto-detects the team) or set Signing > Team in Xcode
-  after `xcodegen generate`.
+- Foreign-network behaviour ("not on the monitor's network"), *Reset pairing…*,
+  auto-wake, Launch at Login across reboots.
 
-## Known/accepted limitations
+## Ideas (not started)
 
-- Powering the monitor **off** needs a live WS; during a transient disconnect ⌃⌥P probes,
-  sees "on", and deliberately does nothing (never blind-toggle).
-- Hotkeys are inert in secure-input contexts (password fields) — macOS behavior.
-
-## Next-step candidates (not started)
-
-- Hardware test pass (checklist above), then fix whatever it surfaces.
-- Optional: manual IP field in Settings; a real `.icns` app icon; make the repo public
-  (consider history rewrite for the team id first).
+- Brightness: probe DDC/CI read-only first; otherwise software dimming (gamma) on F1/F2,
+  which on OLED genuinely reduces emitted light.

@@ -1,225 +1,124 @@
-# M9 Volume — Setup Guide
+# My MacMonitor — Setup Guide
 
-End-user setup for M9 Volume, the macOS menu-bar app that drives a Samsung Smart Monitor M9
-from the Mac keyboard. See [../README.md](../README.md) for the feature overview.
+End-user setup for My MacMonitor, the macOS menu-bar app that lets the Mac keyboard's volume
+keys control a Samsung Smart Monitor M9. See [../README.md](../README.md) for the overview and
+[../SECURITY-AUDIT.md](../SECURITY-AUDIT.md) for the security model.
 
 ---
 
 ## 1. Prerequisites
 
-- **macOS 13 (Ventura) or later** — Launch at Login uses `SMAppService`, which is 13+ only.
+- **macOS 13 (Ventura) or later**, Apple Silicon. Launch at Login uses `SMAppService` (13+).
 - **The M9 on the same /24 subnet as the Mac.** The app finds the monitor by sweeping the
   local subnet; a different VLAN or a "guest" Wi-Fi that isolates clients will hide it.
-- **Build tools**, one of:
-  - Xcode (full IDE), or
-  - Xcode **Command Line Tools** (`xcode-select --install`) plus `xcodegen`.
-- **Homebrew** to install `xcodegen`:
-  ```sh
-  brew install xcodegen
-  ```
+  The USB-C cable only carries video/audio; control goes over Wi-Fi.
+- **Xcode or the Command Line Tools** (`xcode-select --install`). Nothing else.
 
 ---
 
-## 2. Required monitor setting (do this first)
-
-On the monitor, turn **ON**:
-
-```
-Settings > General > Network > Expert Settings > "Power On with Mobile"
-```
-
-**Why it matters.** The M9 has two sleep depths:
-
-- **Network standby** — the network chip stays powered. `http://<ip>:8001/api/v2/` still
-  answers (so the app can read power state and MAC) and Wake-on-LAN works.
-- **Deep standby** — the network chip is off. HTTP and the WebSocket are both dead, and a
-  Wake-on-LAN magic packet is the *only* thing that can wake it.
-
-"Power On with Mobile" (WoWLAN) keeps the NIC alive in standby so software wake works. With
-it **off**, the monitor drops to deep standby and nothing on the Mac can wake it — you'll
-need the physical remote. Auto-wake depends on this setting.
-
----
-
-## 3. Build and install
-
-### Option A — `./build.sh` (recommended)
-
-From the repo root:
+## 2. Build and install
 
 ```sh
-./build.sh
+./build.sh      # → ~/Library/Caches/MyMacMonitor-build/My MacMonitor.app (installs nothing)
+./install.sh    # → /Applications/My MacMonitor.app, then opens it
 ```
 
-This builds a **signed** `M9Volume.app` into **/Applications**. Running from
-`/Applications` (a stable path) is what makes Launch at Login reliable — see the note below.
+- `build.sh` compiles with `swiftc`, embeds the icon and **ad-hoc signs** the app with the
+  hardened runtime. It writes outside `~/Documents` on purpose: iCloud Drive's Desktop &
+  Documents sync stamps Finder/file-provider attributes onto bundles, which breaks the code
+  signature.
+- `install.sh` is a separate, explicit step. Running from `/Applications` (a stable path) is
+  what makes Launch at Login reliable.
+- App Sandbox is intentionally **off** (a sandboxed app cannot create the global event tap the
+  volume keys need). Hardened runtime is **on**.
 
-### Option B — manual (xcodegen + Xcode)
-
-```sh
-brew install xcodegen        # one time
-xcodegen generate            # creates M9Volume.xcodeproj from project.yml
-open M9Volume.xcodeproj       # then set Signing > Team and build (Cmd+R)
-```
-
-In Xcode, set **Signing & Capabilities > Team** to a real Development Team before building.
-
-> **Why a stable signing Team matters.** Two macOS permissions attach to the app's *signing
-> identity*, not just its path:
-> - **Accessibility** permission (granted once, in System Settings) is remembered per
->   identity — change the Team and macOS treats it as a new app and re-prompts.
-> - **Launch at Login** (`SMAppService`) registers the login item against that identity.
->
-> A Cmd+R build runs the app from **DerivedData**, a transient path. That's fine for
-> development, but for Launch at Login to stick, run the copy in **/Applications**.
-
-App Sandbox is intentionally **off** (a sandboxed app cannot create the global event tap the
-volume keys need). Don't add the App Sandbox capability.
+> **Rebuilds and Accessibility.** macOS ties the Accessibility grant to the app's code
+> signature. Every rebuild produces a new ad-hoc signature, so macOS asks again, and the old
+> entry in *Privacy & Security → Accessibility* should be removed. That's expected.
 
 ---
 
-## 4. First launch
+## 3. First launch (do it on your home network)
 
-Two one-time prompts appear:
-
-1. **Accessibility permission (macOS).** The app installs a global CGEventTap to capture the
-   keyboard's volume keys and the ⌃⌥ hotkeys — this needs Accessibility. The app prompts on
-   first launch; grant it in **System Settings > Privacy & Security > Accessibility**.
-
-   > macOS only applies a freshly granted Accessibility permission to a *newly launched*
-   > process, so the app **relaunches itself** automatically within ~1–2 s of the grant. If
-   > it doesn't, quit and reopen it once.
-
-2. **The monitor's "Allow" dialog (Tizen).** The first time the app connects, the M9 shows an
-   **Allow / Deny** pairing prompt on screen. Choose **Allow**. The granted token is written
-   to:
-
-   ```
-   ~/.m9volume_token
-   ```
-
-   and reused on every later connection, so you're only asked once.
+1. **Accessibility permission (macOS).** The app installs an event tap for the **media keys
+   only**. Grant it in **System Settings → Privacy & Security → Accessibility**. The app
+   relaunches itself within ~1–2 s (macOS only applies a fresh grant to a new process).
+2. **Local Network (macOS)**, if asked: allow it, since discovery needs the LAN.
+3. **The monitor's "Allow" dialog (Tizen).** The first connection shows an Allow/Deny prompt on
+   the monitor. Choose **Allow**. The token is stored owner-only at `~/.mymacmonitor_token`.
+4. At that moment the app **pins the monitor's TLS certificate** and remembers this subnet as
+   its home network.
 
 ---
 
-## 5. Verify it works
+## 4. Verify it works
 
-- The menu-bar icon appears (a TV-and-speaker glyph). Click it — the header should read
-  **"M9 — connected (192.168.x.y)"** once discovery and pairing finish.
-- Press the keyboard's **volume up / down** and **mute** keys — the monitor's volume changes,
-  and the Mac's own volume HUD does **not** appear (the event is swallowed).
-- Menu > **Unmute** should reliably un-mute (it sends volume-up then volume-down; see the
-  protocol notes — mute is toggle-only and its state can't be read back).
+- The menu-bar icon (display + speaker) shows **"M9 — connected (…)"**.
+- With the monitor selected as sound output, **F11/F12/F10** change the monitor's volume/mute.
+- Switch the output to the Mac's speakers: the same keys show the normal macOS volume HUD.
 
 ---
 
-## 6. Settings and shortcuts
+## 5. Settings
 
-### Settings window (menu > **Settings…**)
+Menu → **Settings…**
 
-- **Monitor** — connection status, the persisted Wi-Fi MAC (used for Wake-on-LAN), and a
-  **Rescan** button.
-- **Forward volume keys to M9** — turn key forwarding on/off. (Off still leaves the ⌃⌥
-  hotkeys and Remote Mode working — only the media-key branch is gated.)
-- **Auto-wake monitor when the Mac wakes** — default **on**. Wakes the M9 at Mac-wake and
-  display-wake transitions only; the monitor still sleeps normally otherwise.
-- **Launch at Login** — registers the app as a login item (needs the /Applications copy).
+- **Monitor**: connection status, the monitor's Wi-Fi MAC (Wake-on-LAN target), **Rescan**.
+- **Forward volume keys to M9**: master switch. Even when on, keys are only taken while the
+  monitor is the sound output.
+- **Auto-wake monitor when the Mac wakes**: **off** by default. Requires the monitor setting
+  *Settings → General → Network → Expert Settings → "Power On with Mobile"* (this keeps the
+  monitor's network chip alive in standby, at some power and exposure cost).
+- **Launch at Login**: registers the app as a login item (needs the `/Applications` copy).
 
-### Keyboard shortcuts
-
-Always-live global hotkeys (work regardless of the Forward-keys toggle):
-
-| Shortcut | Action |
-|---|---|
-| ⌃⌥ ← ↑ ↓ → | Navigate |
-| ⌃⌥ ↩ | OK / Select |
-| ⌃⌥ ⌫ | Back |
-| ⌃⌥ H | Home |
-| ⌃⌥ P | Monitor power (smart toggle) |
-| ⌃⌥ R | Toggle Remote Mode |
-
-**Remote Mode** (⌃⌥R): the menu-bar icon becomes a remote glyph and **bare** arrows /
-Return / Esc drive the monitor directly (Esc = Back). Everything else types normally. Press
-⌃⌥R again to exit. Remote Mode is not persisted — it starts **off** each launch.
+Menu items **OK / Back / Home / Monitor Power** drive the monitor's own UI with a click.
 
 ---
 
-## 7. Troubleshooting (deep)
+## 6. Troubleshooting
 
-### Discovery: "M9 — searching…" never resolves
+### "M9 — not on the monitor's network"
+You're on a different Wi-Fi than the one where the monitor was paired. The app deliberately
+does nothing here (no scanning, no token sent). If you **moved** home networks, connect to the
+new one and click **Rescan for monitor (this network)**.
 
-- The app first tries the **saved IP** (`m9_last_ip`), then sweeps the whole local **/24**
-  (addresses `.1`–`.254`), hitting `http://<candidate>:8001/api/v2/` and matching the raw
-  response body for "M9". Confirm the Mac and monitor are on the **same subnet** — a sweep of
-  `192.168.1.x` will never reach a monitor on `192.168.0.x` or on an isolating guest network.
-- The subnet is derived from the Mac's **en0/en1** IPv4 address. On an unusual interface
-  (USB Ethernet dongle, etc.) discovery may not run — connect the Mac via Wi-Fi/en0.
-- **DHCP gave the monitor a new IP.** Reconnect failures auto-trigger a re-sweep after a few
-  attempts, but you can force it: menu > **Rescan for monitor** (clears the saved IP and
-  sweeps fresh). Consider a DHCP reservation for the monitor's MAC to avoid churn.
+### "M9 — certificate changed!"
+The monitor presented a different TLS certificate than the pinned one. If you **just reset or
+updated** the monitor, use **Reset pairing…** and accept the monitor's Allow prompt again. If
+you didn't, treat it as a possible impersonation attempt on your network and don't reset.
 
-### Auto-wake does nothing
+### "M9 — searching…" never resolves
+- Mac and monitor must share the same /24 (`192.168.x.*`). Check the monitor's IP in
+  *Settings → General → Network → Network Status*.
+- The subnet is read from the Mac's `en0`/`en1` (Wi-Fi). Unusual interfaces may not work.
+- DHCP may have moved the monitor: **Rescan**. A DHCP reservation avoids churn.
 
-- **"Power On with Mobile" is off** — the most common cause. In deep standby the NIC is dead,
-  so neither Wake-on-LAN nor the `:8001` probe reach the monitor. Turn the setting on
-  (Section 2).
-- **No MAC captured yet.** Wake-on-LAN needs the monitor's Wi-Fi MAC, which is learned from a
-  successful `:8001` probe and persisted as `m9_wifi_mac`. If the app has never reached the
-  monitor while it was awake, it has no MAC to target — connect once while the monitor is on,
-  then MAC-based wake works thereafter.
-- **Wake-on-LAN blocked by the network.** The app sends the magic packet to both the global
-  broadcast `255.255.255.255` and the subnet-directed `<base>.255`; some access points drop
-  one or the other. If both are filtered (common on isolating APs), software wake can't work.
-- **Powering the monitor *off* while disconnected does nothing — by design.** `KEY_POWER` is
-  a toggle whose state can't be read back, and it's never blind-sent or queued (a stale queued
-  toggle would switch a just-woken monitor back off). ⌃⌥P / Monitor Power over a *live*
-  connection toggles; while disconnected it runs the wake sequence instead of guessing.
+### Volume keys don't reach the monitor
+- Is the monitor the **sound output**? (*System Settings → Sound → Output*.) By design, keys
+  only go to it then.
+- Accessibility granted to *this* build? Remove stale entries and re-grant.
+- Keys are inert inside secure-input fields (password prompts). That's macOS by design.
 
-### Volume keys / hotkeys don't respond
+### Powering the monitor off while disconnected does nothing
+By design: `KEY_POWER` is a toggle whose state can't be read, so it's never blind-sent or
+queued. See [PROTOCOL.md](PROTOCOL.md).
 
-- Grant **Accessibility** (System Settings > Privacy & Security > Accessibility). If you
-  granted it but nothing happens, quit and relaunch once (the auto-relaunch may have been
-  missed).
-- Hotkeys are inert inside **secure-input** fields (password prompts) — that's macOS by
-  design, not a bug.
+---
 
-### Pairing / token reset
+## 7. Persisted state
 
-If the monitor stops accepting the connection (you revoked the device on the TV, replaced the
-monitor, or see repeated "unauthorized"), delete the token and re-pair:
-
-```sh
-rm ~/.m9volume_token
-```
-
-Next connection triggers the monitor's **Allow** dialog again; accept it and a fresh token is
-written.
-
-### Inspecting persisted state
-
-The app stores its keys in `UserDefaults` under `com.omer.m9volume`:
-
-```sh
-defaults read com.omer.m9volume
-```
+`UserDefaults` domain `io.github.gerevolver.mymacmonitor`:
 
 | Key | Meaning |
 |---|---|
-| `m9_last_ip` | Last known monitor IP (discovery shortcut). |
-| `m9_wifi_mac` | Monitor Wi-Fi MAC, target for Wake-on-LAN. |
-| `m9_autowake` | Auto-wake toggle (default on). |
-| `m9_forward_keys` | Forward-volume-keys toggle (default on). |
-
-Read a single key, e.g.:
-
-```sh
-defaults read com.omer.m9volume m9_last_ip
-```
-
-To force a clean rediscovery you can clear the saved IP (or just use **Rescan**):
+| `m9_last_ip` | Last known monitor IP |
+| `m9_home_subnet` | /24 where the monitor was found (network scope) |
+| `m9_cert_sha256` | Pinned monitor certificate fingerprint |
+| `m9_wifi_mac` | Monitor Wi-Fi MAC (Wake-on-LAN target) |
+| `m9_autowake` | Auto-wake toggle (default off) |
+| `m9_forward_keys` | Forward-keys toggle (default on) |
 
 ```sh
-defaults delete com.omer.m9volume m9_last_ip
+defaults read io.github.gerevolver.mymacmonitor
+stat -f %Lp ~/.mymacmonitor_token     # should print 600
 ```
-
-The pairing token is **not** in UserDefaults — it lives in `~/.m9volume_token`.

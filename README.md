@@ -1,106 +1,85 @@
-# M9 Volume
+<p align="center"><img src="docs/icon.png" width="128" alt="My MacMonitor icon"></p>
 
-A macOS menu-bar app that controls a **Samsung Smart Monitor M9** from the Mac keyboard —
-volume, mute, power, and full remote navigation — over the monitor's Wi-Fi remote protocol.
+# My MacMonitor
 
-Samsung Smart Monitors run Tizen and don't support DDC/CI, so tools like MonitorControl or
-BetterDisplay can't see them and the Mac's volume keys do nothing. This app forwards those
-keys over the same WebSocket remote API a Samsung TV uses, and adds the parts a monitor-as-
-Mac-display actually needs: waking it when you sit down, and driving its Tizen UI without
-hunting for the physical remote.
+A small macOS menu-bar app that makes the Mac keyboard's **volume keys (F10 / F11 / F12)
+control a Samsung Smart Monitor M9's built-in speakers**. It's a security-hardened fork of
+[omarozt/M9Volume](https://github.com/omarozt/M9Volume).
 
-## Features
+> **Why a fork?** Before installing the original, I audited it. It was honest code, but it
+> asked for more than it needed (it could see every keystroke, trusted any TLS certificate,
+> and scanned any Wi-Fi network). This fork keeps the feature and removes the excess.
+> Full report: **[SECURITY-AUDIT.md](SECURITY-AUDIT.md)**.
 
-- **Volume keys just work** — the keyboard's volume up/down/mute keys control the M9
-  (the Mac-side event is swallowed so nothing double-triggers).
-- **Auto-wake** — when the Mac wakes, or the displays wake after idle, the monitor is
-  powered on automatically (Wake-on-LAN plus a state-guarded power key). It only acts at
-  wake transitions — the monitor still sleeps normally.
-- **Remote navigation from the keyboard**:
+## The problem
 
-  | Shortcut | Action |
-  |---|---|
-  | ⌃⌥ ← ↑ ↓ → | Navigate |
-  | ⌃⌥ ↩ | OK / Select |
-  | ⌃⌥ ⌫ | Back |
-  | ⌃⌥ H | Home |
-  | ⌃⌥ P | Monitor power (smart toggle) |
-  | ⌃⌥ R | Toggle Remote Mode |
+Over USB-C/DisplayPort, macOS sends audio at a fixed level and greys out its volume
+control. Samsung Smart Monitors (Tizen) don't support DDC/CI, so tools like MonitorControl
+can't adjust them either. The monitor does accept the same Wi-Fi remote protocol Samsung TVs
+use, and that's what this app speaks.
 
-- **Remote Mode** (⌃⌥R) — the menu-bar icon becomes a remote glyph and bare
-  **arrows / Return / Esc** drive the monitor directly; everything else types normally.
-  Toggle again to exit.
-- **Settings window** — connection status, monitor MAC, rescan, and toggles for key
-  forwarding, auto-wake, and Launch at Login. **About** panel lists the shortcuts.
-- **Zero configuration** — finds the monitor by sweeping the local /24, remembers its IP
-  and MAC, reconnects with backoff after monitor/Mac sleep, re-discovers after DHCP
-  changes, and persists the pairing token (`~/.m9volume_token`).
+## What it does
+
+- **F10 / F11 / F12** mute / lower / raise the monitor's volume, **but only while the
+  monitor is the Mac's sound output.** With speakers or headphones selected, the keys control
+  the Mac as usual.
+- Menu-bar controls: volume, mute/unmute, OK / Back / Home / Power for the monitor's UI.
+- Finds the monitor automatically on your home network and reconnects after sleep.
+- Optional: auto-wake the monitor when the Mac wakes; Launch at Login.
+
+## Security posture
+
+| | Upstream | My MacMonitor |
+|---|---|---|
+| Keyboard visibility | Every keystroke (`keyDown`) | Media keys only |
+| Volume keys away from the monitor | Swallowed | Passed through to macOS |
+| Monitor TLS certificate | Any cert accepted | Pinned on first use |
+| Pairing token | World-readable (`0644`) | Owner-only (`0600`) |
+| Network scanning | Any Wi-Fi | Only the network where the monitor lives |
+| App Transport Security | Disabled | LAN-only exception |
+| Auto-wake | On by default | Opt-in |
+| Internet / telemetry | None | None |
 
 ## Requirements
 
-- macOS 13+ (Ventura or later).
-- The M9 on the same network/subnet as the Mac.
-- **Accessibility permission** (to capture the keyboard keys) — the app prompts on first
-  launch and relaunches itself once granted.
-- For auto-wake: the monitor setting **Settings > General > Network > Expert Settings >
-  "Power On with Mobile"** must be ON. Without it the monitor drops into deep standby
-  where no software can wake it.
+- Apple Silicon Mac, macOS 13+ (tested on macOS 27.2)
+- Samsung Smart Monitor M9 on the **same Wi-Fi/subnet** as the Mac
+- Xcode or the Command Line Tools (`xcode-select --install`) to build. No Homebrew needed.
 
 ## Build & install
 
-The short way — builds a signed `M9Volume.app` straight into `/Applications`:
-
 ```sh
-./build.sh
+git clone https://github.com/GeRevolver/MyMacMonitor.git
+cd MyMacMonitor
+./build.sh      # compiles + ad-hoc signs into ~/Library/Caches/MyMacMonitor-build (installs nothing)
+./install.sh    # copies to /Applications and opens it (explicit, separate step)
 ```
 
-Or manually via Xcode:
+On first launch:
+1. Grant **Accessibility** when macOS asks (needed to intercept the volume keys). The app
+   relaunches itself.
+2. Choose **Allow** on the monitor's pairing prompt.
+3. Optional: *Settings… → Launch at Login*.
+
+Do the first launch **on your home network**; that's the network the app will trust.
+
+More: [docs/SETUP.md](docs/SETUP.md) (setup & troubleshooting) ·
+[docs/PROTOCOL.md](docs/PROTOCOL.md) (Samsung/Tizen protocol notes).
+
+## Uninstall
+
+Quit from the menu, then:
 
 ```sh
-brew install xcodegen        # one time
-xcodegen generate            # creates M9Volume.xcodeproj from project.yml
-open M9Volume.xcodeproj      # set Signing > Team, then build
+rm -rf "/Applications/My MacMonitor.app" ~/.mymacmonitor_token
+defaults delete io.github.gerevolver.mymacmonitor
 ```
 
-Quick syntax check without Xcode: `swiftc Sources/main.swift -o /tmp/m9 -framework Cocoa`.
+and remove it from *System Settings → Privacy & Security → Accessibility*.
 
-**Step-by-step instructions** (monitor settings, permissions, pairing, deep
-troubleshooting): see the **[Setup Guide](docs/SETUP.md)**.
+## Credits & license
 
-Run the built `M9Volume.app` from **/Applications** — Launch at Login (SMAppService) needs
-a stable path, and Accessibility permission sticks to the signing identity, so set a real
-Team before building.
-
-On first connection the monitor shows an **Allow** dialog — accept it once; the granted
-token is stored and reused.
-
-## Troubleshooting
-
-- **"M9 — searching…" forever** — the monitor must be on the same /24 subnet; try
-  *Rescan for monitor*; check it's on Wi-Fi at all.
-- **Auto-wake does nothing** — enable "Power On with Mobile" on the monitor (see above).
-- **Hotkeys don't respond** — grant Accessibility (System Settings > Privacy & Security);
-  note hotkeys are inert inside secure-input fields (password prompts) by macOS design.
-- **Power key seems ignored while disconnected** — powering the monitor *off* requires a
-  live connection; the app never blind-fires the power toggle (it's a toggle, and firing
-  it late would turn a freshly-woken monitor back off).
-
-## How it works
-
-The M9 exposes the Samsung TV remote WebSocket on `wss://<ip>:8002` (self-signed cert,
-token auth) and a device-info endpoint on `http://<ip>:8001/api/v2/` that reports
-`PowerState` and `wifiMac`. Keys are relative-only (`KEY_VOLUP`, `KEY_MUTE`, …); volume
-capture uses a CGEventTap on the system media keys. Waking uses a WoL magic packet first,
-then `KEY_POWER` only when the monitor verifiably reports `standby`. UPnP RenderingControl
-looks available on this hardware but is a non-functional stub.
-
-Full protocol details — endpoints, payloads, key semantics, Wake-on-LAN, discovery, and
-the dead ends so you don't repeat them — are in
-**[docs/PROTOCOL.md](docs/PROTOCOL.md)**; architecture and build constraints (sandbox must
-stay off, etc.) are in `CLAUDE.md`.
-
-Everything lives in one file: `Sources/main.swift`.
-
-## License
-
-[MIT](LICENSE)
+Original app and protocol research: [Omer Faruk Oztemiz](https://github.com/omarozt).
+Security audit, hardening and rebrand: [Gerardo Espinosa](https://github.com/GeRevolver),
+prepared with AI assistance (Claude Code) and tested on real hardware.
+[MIT](LICENSE).
